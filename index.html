@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登記</title>
+<style>
+  body{font-family:system-ui,"Microsoft JhengHei",sans-serif;max-width:560px;margin:0 auto;padding:16px;background:#f5f6f8;color:#222}
+  .card{background:#fff;border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 1px 4px #0001}
+  img{max-width:100%;border-radius:8px}
+  label{display:block;margin-top:12px;font-size:14px;color:#555}
+  input,textarea,button{width:100%;box-sizing:border-box;padding:10px;font-size:16px;border:1px solid #ccc;border-radius:8px;margin-top:4px}
+  button{background:#2563eb;color:#fff;border:0;margin-top:16px;cursor:pointer}
+  #msg{margin-top:12px;font-weight:bold}
+  pre{white-space:pre-wrap;margin:0;font-family:inherit}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2 id="title">菜單</h2>
+  <div id="menuImg"></div>
+  <pre id="menuText"></pre>
+  <div id="empty" style="color:#999">尚未上傳菜單</div>
+</div>
+
+<div class="card">
+  <h2>我要登記</h2>
+  <label>姓名 / 工號<input id="who" placeholder="例：王小明 或 A1234"></label>
+  <label>項目名稱<input id="item" placeholder="例：雞腿便當"></label>
+  <label>金額<input id="amount" type="number" inputmode="decimal" min="0"></label>
+  <label>備註<textarea id="note" rows="2" placeholder="例：不要辣、飯少"></textarea></label>
+  <button id="send">送出登記</button>
+  <div id="msg"></div>
+  <p style="font-size:12px;color:#888">同一姓名/工號再次送出，會覆蓋先前的登記。</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+$("who").value = localStorage.getItem("who") || "";
+
+fetch("/api/menu").then(r => r.json()).then(m => {
+  if (m.title) $("title").textContent = m.title;
+  if (m.image) $("menuImg").innerHTML = `<img src="${m.image}">`;
+  $("menuText").textContent = m.text || "";
+  if (m.image || m.text) $("empty").style.display = "none";
+});
+
+$("send").onclick = async () => {
+  const body = { who: $("who").value, item: $("item").value, amount: $("amount").value, note: $("note").value };
+  $("msg").style.color = "#555"; $("msg").textContent = "送出中…";
+  const r = await fetch("/api/order", { method: "POST", body: JSON.stringify(body) });
+  const d = await r.json();
+  if (r.ok) { localStorage.setItem("who", body.who); $("msg").style.color = "green"; $("msg").textContent = "✅ 登記成功！"; }
+  else { $("msg").style.color = "red"; $("msg").textContent = d.error || "失敗"; }
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>後台</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  body{font-family:system-ui,"Microsoft JhengHei",sans-serif;max-width:900px;margin:0 auto;padding:16px;background:#f5f6f8;color:#222}
+  .card{background:#fff;border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 1px 4px #0001}
+  input,textarea,button{padding:8px 10px;font-size:15px;border:1px solid #ccc;border-radius:8px;margin:4px 0}
+  input[type=text],input[type=password],textarea{width:100%;box-sizing:border-box}
+  button{background:#2563eb;color:#fff;border:0;cursor:pointer;margin-right:6px}
+  button.red{background:#dc2626}
+  button.green{background:#16a34a}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid #eee;padding:6px;text-align:left}
+  #preview{max-width:240px;display:block;margin-top:8px;border-radius:8px}
+</style>
+</head>
+<body>
+<div class="card">
+  <b>管理密碼</b>
+  <input type="password" id="pwd" placeholder="輸入後台密碼">
+  <button onclick="savePwd()">登入並載入</button>
+</div>
+
+<div class="card">
+  <h3>上傳菜單</h3>
+  <input type="text" id="title" placeholder="標題（例：11/18 午餐）">
+  <input type="file" id="file" accept="image/*">
+  <img id="preview">
+  <textarea id="text" rows="4" placeholder="（可選）文字菜單 / 說明"></textarea>
+  <label><input type="checkbox" id="clear" checked> 發布時清空舊的登記</label><br>
+  <button onclick="saveMenu()">發布菜單</button>
+  <span id="menuMsg"></span>
+</div>
+
+<div class="card">
+  <h3>登記清單 <span id="count"></span></h3>
+  <button onclick="load()">重新整理</button>
+  <button class="green" onclick="exportXlsx()">匯出 Excel</button>
+  <table>
+    <thead><tr><th>時間</th><th>姓名/工號</th><th>項目</th><th>金額</th><th>備註</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <h4>統計</h4>
+  <div id="summary"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let orders = [], imageData = "";
+$("pwd").value = sessionStorage.getItem("pwd") || "";
+const H = () => ({ "x-admin-password": $("pwd").value });
+const fmt = t => new Date(t).toLocaleString("zh-TW", { hour12: false });
+
+function savePwd(){ sessionStorage.setItem("pwd", $("pwd").value); load(); loadMenu(); }
+
+// 圖片壓縮後轉 base64
+$("file").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => {
+    const s = Math.min(1, 1400 / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = img.width * s; c.height = img.height * s;
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    imageData = c.toDataURL("image/jpeg", 0.8);
+    $("preview").src = imageData;
+  };
+  img.src = URL.createObjectURL(f);
+};
+
+async function loadMenu(){
+  const m = await (await fetch("/api/menu")).json();
+  $("title").value = m.title || ""; $("text").value = m.text || "";
+  imageData = m.image || ""; $("preview").src = imageData;
+}
+
+async function saveMenu(){
+  const r = await fetch("/api/menu", { method: "POST", headers: H(), body: JSON.stringify({
+    title: $("title").value, text: $("text").value, image: imageData, clear: $("clear").checked }) });
+  $("menuMsg").textContent = r.ok ? "✅ 已發布" : "❌ 密碼錯誤";
+  if (r.ok) load();
+}
+
+async function load(){
+  const r = await fetch("/api/orders", { headers: H() });
+  if (!r.ok) { $("rows").innerHTML = "<tr><td colspan=6>密碼錯誤</td></tr>"; return; }
+  orders = await r.json();
+  $("count").textContent = `（${orders.length} 人，合計 $${orders.reduce((s,o)=>s+o.amount,0)}）`;
+  $("rows").innerHTML = orders.map(o => `<tr><td>${fmt(o.time)}</td><td>${esc(o.who)}</td><td>${esc(o.item)}</td>
+    <td>${o.amount}</td><td>${esc(o.note)}</td>
+    <td><button class="red" onclick="del('${o.key}')">刪</button></td></tr>`).join("");
+  const g = {};
+  orders.forEach(o => { g[o.item] = g[o.item] || { n: 0, sum: 0 }; g[o.item].n++; g[o.item].sum += o.amount; });
+  $("summary").innerHTML = Object.entries(g).map(([k,v]) => `${esc(k)} × ${v.n}（$${v.sum}）`).join("<br>") || "—";
+}
+const esc = s => String(s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function del(key){
+  if (!confirm("確定刪除？")) return;
+  await fetch("/api/order?key=" + encodeURIComponent(key), { method: "DELETE", headers: H() });
+  load();
+}
+
+function exportXlsx(){
+  if (!orders.length) return alert("目前沒有資料");
+  const detail = orders.map(o => ({ 時間: fmt(o.time), "姓名/工號": o.who, 項目: o.item, 金額: o.amount, 備註: o.note }));
+  const g = {};
+  orders.forEach(o => { g[o.item] = g[o.item] || { 項目: o.item, 數量: 0, 小計: 0 }; g[o.item].數量++; g[o.item].小計 += o.amount; });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), "明細");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(Object.values(g)), "統計");
+  XLSX.writeFile(wb, `登記_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+if ($("pwd").value) { load(); loadMenu(); }
+</script>
+</body>
+</html>
